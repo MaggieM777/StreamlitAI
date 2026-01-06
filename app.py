@@ -1,123 +1,101 @@
 import streamlit as st
 import numpy as np
 from PIL import Image
-from sklearn.datasets import load_digits
-from sklearn.model_selection import train_test_split
-from sklearn.neural_network import MLPClassifier
+import joblib
+import requests
+import io
 
-st.set_page_config(page_title="Разпознаване на ръкописни цифри", page_icon="✍️")
-st.title("Разпознаване на ръкописни цифри ✍️🤖")
-st.write("Качи ръкописна цифра и AI ще се опита да я разпознае.")
+st.set_page_config(page_title="Handwritten Digit Recognition", page_icon="✍️")
+st.title("✍️ Handwritten Digit Recognition")
+st.write("Upload a handwritten digit image and AI will try to recognize it.")
 
-# -----------------------------
-# Трениране на модел
-# -----------------------------
+# Simple model loading with fallback
 @st.cache_resource
-def train_model():
-    digits = load_digits()
-    X = digits.images.reshape((len(digits.images), -1)) / 16.0
-    y = digits.target
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-    model = MLPClassifier(
-        hidden_layer_sizes=(128, 64),  # повече слоеве за по-добра точност
-        max_iter=500,  # повече итерации
-        random_state=42,
-        verbose=False,
-        early_stopping=True
-    )
-    model.fit(X_train, y_train)
-    accuracy = model.score(X_test, y_test)
-    st.sidebar.success(f"Моделът е обучен с точност: {accuracy:.2%}")
-    return model
-
-model = train_model()
-
-# -----------------------------
-# Качване на изображение
-# -----------------------------
-st.sidebar.header("Настройки")
-st.sidebar.write("""
-Моделът е обучен с MNIST 8x8.
-За по-добри резултати:
-- Черна цифра на бял фон
-- Минимум шум
-- Центрирана цифра
-""")
-
-user_image = st.file_uploader("Качи ръкописна цифра (.png/.jpg/.jpeg)", type=["png", "jpg", "jpeg"])
-
-if user_image:
+def load_model():
     try:
-        # Отваряне и обработка на изображението
-        img = Image.open(user_image).convert("L")  # преобразуване в grayscale
+        # Try to load pre-trained model
+        # Using sklearn's built-in digits dataset
+        from sklearn.datasets import load_digits
+        from sklearn.neural_network import MLPClassifier
+        from sklearn.model_selection import train_test_split
         
-        col1, col2 = st.columns(2)
+        digits = load_digits()
+        X = digits.images.reshape((len(digits.images), -1)) / 16.0
+        y = digits.target
+        X_train, _, y_train, _ = train_test_split(X, y, test_size=0.2, random_state=42)
         
-        with col1:
-            st.subheader("Оригинално изображение")
-            st.image(img, caption=f"Размер: {img.size}", use_column_width=True)
+        model = MLPClassifier(
+            hidden_layer_sizes=(100,),
+            max_iter=100,
+            random_state=42
+        )
+        model.fit(X_train, y_train)
+        return model
+    except Exception as e:
+        st.error(f"Model loading error: {e}")
+        return None
+
+model = load_model()
+
+if model is None:
+    st.warning("Could not load model. Using fallback recognition.")
+else:
+    st.success("Model loaded successfully!")
+
+# File uploader
+uploaded_file = st.file_uploader("Choose an image file", type=["png", "jpg", "jpeg"])
+
+if uploaded_file is not None:
+    # Display the uploaded image
+    image = Image.open(uploaded_file)
+    st.image(image, caption='Uploaded Image', use_column_width=True)
+    
+    # Process the image
+    try:
+        # Convert to grayscale and resize to 8x8
+        img_gray = image.convert('L')
+        img_resized = img_gray.resize((8, 8))
         
-        # Преоразмеряване на 8x8 (както в MNIST)
-        img_resized = img.resize((8, 8), Image.Resampling.LANCZOS)
+        # Convert to numpy array and invert if needed
         img_array = np.array(img_resized)
         
-        # Инверсия ако фонът е тъмен (черна цифра на бял фон е стандартно)
-        if img_array.mean() > 128:
+        # If background is dark, invert
+        if np.mean(img_array) > 128:
             img_array = 255 - img_array
         
-        # Нормализиране както при обучението (0-16)
+        # Normalize like the training data
         img_array = img_array / 16.0
-        img_flat = img_array.reshape(1, 64)
+        img_flat = img_array.flatten().reshape(1, -1)
         
-        # Прогноза
-        prediction = model.predict(img_flat)[0]
-        probabilities = model.predict_proba(img_flat)[0]
-        
-        with col2:
-            st.subheader("Обработено за модела (8x8)")
-            st.image(img_resized.resize((64, 64)), caption="8x8 увеличено", use_column_width=False)
-        
-        # Резултати
-        st.markdown("---")
-        st.subheader("📊 Резултат")
-        
-        col_res1, col_res2 = st.columns(2)
-        
-        with col_res1:
-            st.markdown(f"### 🎯 Прогноза: **{prediction}**")
-            st.markdown(f"**Увереност:** {probabilities[prediction]:.2%}")
-        
-        with col_res2:
-            st.markdown("### Вероятности за всички цифри:")
-            prob_dict = {i: prob for i, prob in enumerate(probabilities)}
-            sorted_probs = sorted(prob_dict.items(), key=lambda x: x[1], reverse=True)
+        if model is not None:
+            # Make prediction
+            prediction = model.predict(img_flat)[0]
+            st.write(f"## Prediction: **{prediction}**")
             
-            for digit, prob in sorted_probs[:3]:  # Топ 3 прогнози
-                st.progress(float(prob), text=f"Цифра {digit}: {prob:.2%}")
-        
-        # Показване на всички вероятности
-        with st.expander("Виж всички вероятности"):
-            for digit in range(10):
-                st.write(f"Цифра {digit}: {probabilities[digit]:.4f}")
-                
+            # Show probabilities
+            probs = model.predict_proba(img_flat)[0]
+            st.write("### Probabilities:")
+            for i, prob in enumerate(probs):
+                st.write(f"Digit {i}: {prob:.2%}")
+        else:
+            # Fallback: simple threshold-based recognition
+            st.write("## Using fallback recognition")
+            # Simple heuristic based on pixel intensity
+            digit_guess = np.argmax(np.sum(img_array.reshape(8, 8), axis=0)) % 10
+            st.write(f"Estimated digit: **{digit_guess}**")
+            
     except Exception as e:
-        st.error(f"Грешка при обработка на изображението: {str(e)}")
-        st.info("Моля, опитайте с друго изображение.")
+        st.error(f"Error processing image: {e}")
 
-# -----------------------------
-# Инструкции
-# -----------------------------
-st.markdown("---")
-st.markdown("""
-### 📝 Инструкции:
-1. Качете изображение с ръкописна цифра (0-9)
-2. Изображението ще бъде автоматично обработено
-3. AI моделът ще даде прогноза
-4. За по-добри резултати използвайте ясни изображения
-
-### ℹ️ Забележки:
-- Моделът е обучен с 8x8 пиксела изображения
-- Точността е около 95-97%
-- За най-добри резултати цифрата трябва да е центрирана
+# Instructions
+st.sidebar.header("Instructions")
+st.sidebar.write("""
+1. Upload an image of a handwritten digit (0-9)
+2. The image will be resized to 8x8 pixels
+3. AI model will predict the digit
+4. For best results:
+   - White background
+   - Black digit
+   - Centered digit
+   - Minimal noise
 """)
