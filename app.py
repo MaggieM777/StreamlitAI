@@ -9,12 +9,12 @@ st.title("Разпознаване на ръкописни цифри ✍️🤖
 st.write("Качи ръкописна цифра или я нарисувай и AI ще се опита да я разпознае.")
 
 # -----------------------------
-# Зареждаме dataset и тренираме модел
+# Тренираме MLP модел с MNIST 8x8
 # -----------------------------
 @st.cache_resource
 def train_model():
     digits = load_digits()
-    X = digits.images.reshape((len(digits.images), -1)) / 16.0  # нормализиране
+    X = digits.images.reshape((len(digits.images), -1)) / 16.0
     y = digits.target
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
@@ -33,7 +33,7 @@ if user_image:
     img = Image.open(user_image).convert("L").resize((8,8))  # sklearn MNIST е 8x8
     img_array = np.array(img)
     
-    # инверсия (ако е бяло поле и черна цифра)
+    # инверсия ако е бяло поле и черна цифра
     if img_array.mean() > 128:
         img_array = 255 - img_array
     
